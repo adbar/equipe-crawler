@@ -23,8 +23,7 @@ use warnings;
 use utf8;
 use Encode;
 use LWP::Simple;
-#use String::CRC32; alternative
-use Digest::CRC qw(crc32);
+use Digest::CRC qw(crc32); #alternative : use String::CRC32;
 use List::MoreUtils qw(uniq);
 use Text::Trim;
 
@@ -108,14 +107,14 @@ print TRACE "$url\n";
 my (@text, $titel, $excerpt, $info, $photo, $date);
 
 #Fetch the page
-if ($url !~ m/^http:\/\/www\.lequipe\.fr/) {
+if ($url !~ m/^http:\/\/www\.lequipe\.fr/o) {
 	$urlcorr = "http://www.lequipe.fr/" . $url;
 	$seite = get $urlcorr;
 }
 else {
 	$seite = get $url;
 }
-# re-encoding not always necessary
+# re-encoding seems to be necessary
 $seite = encode("iso-8859-1", $seite);
 
 
@@ -125,12 +124,13 @@ $seite = encode("iso-8859-1", $seite);
 foreach $n (@temp) {
 
 #if ( ($n =~ m/\/Actualites/) || ($n =~ m/\/breves20/) ) {
-if ($n =~ m/\/Actualites/) {
-	next if ($n =~ m/redir\.php/);
-	$n =~ m/href="(.+?)"/;
+if ($n =~ m/\/Actualites/o) {
+	next if ($n =~ m/redir\.php/o);
+	$n =~ m/href="(.+?)"/o;
 	$n = $1;
-	$n =~ s/^http:\/\/www\.lequipe\.fr\///;
-	$n =~ s/^\///;
+	$n =~ s/^http:\/\/log.+?xiti.com\/go.click?.+?&url=//o;
+	$n =~ s/^http:\/\/www\.lequipe\.fr\///o;
+	$n =~ s/^\///o;
 	push (@links, $n);
 }
 }
@@ -140,7 +140,6 @@ if ($n =~ m/\/Actualites/) {
 # Storing and buffering links
 # The use of a buffer saves memory and processing time (especially by frequently occurring links)
 $q=0;
-@done_crc = sort (@done_crc);
 foreach $n (@links) {
 	if ($q >= 5) {
 	push (@buffer, $n);
@@ -172,35 +171,36 @@ if (scalar @buffer >= 1000) {
 
 # Extraction of metadata
 # All this part is based on regular expressions, which is not recommended when crawling in the wild.
+{ no warnings 'uninitialized';
 
 # Old design of the HTML code
-if ($seite =~ m/<div id="corps">/) {
+if ($seite =~ m/<div id="corps">/o) {
 
 	@temp = split ("<div id=\"corps\">", $seite);
 	$seite = $temp[1];
 	@temp = split ("<div id=\"bloc_bas_breve\">", $seite);
 	$seite = $temp[0];
 
-	$seite =~ m/(<h2>)(.+?)(<\/h2>)/;
+	$seite =~ m/(<h2>)(.+?)(<\/h2>)/o;
 	$info = $2;
 	
-	$seite =~ m/(<h1>)(.+?)(<\/h1>)/;
+	$seite =~ m/(<h1>)(.+?)(<\/h1>)/o;
 	$titel = $2;
 
-	if ($seite =~ m/<strong>/) {
-		$seite =~ m/(<strong>)(.+?)(<\/strong>)/;
+	if ($seite =~ m/<strong>/o) {
+		$seite =~ m/(<strong>)(.+?)(<\/strong>)/o;
 		$excerpt = $2;
-		$seite =~ s/<strong>.+?<\/strong>//;
+		$seite =~ s/<strong>.+?<\/strong>//o;
 	}
 
-	if ($seite =~ m/<strong>/) {
-	$seite =~ m/(<div class="leg">?)(.+?)(<\/div>)/;
+	if ($seite =~ m/<strong>/o) {
+	$seite =~ m/(<div class="leg">?)(.+?)(<\/div>)/o;
 	$photo = $2;
-	$seite =~ s/<div class="leg">.+?<\/div>//;
+	$seite =~ s/<div class="leg">.+?<\/div>//o;
 	}
 
-	$seite =~ s/<h2>.+?<\/h2>//g;
-	$seite =~ s/<h1>.+?<\/h1>//g;
+	$seite =~ s/<h2>.+?<\/h2>//og;
+	$seite =~ s/<h1>.+?<\/h1>//og;
 
 	# Possible improvement : author detection
 	#<div id="auteur">
@@ -215,29 +215,29 @@ else {
 	@temp = split ("<div id=\"bloc_bas_breve\">", $seite);
 	$seite = $temp[0];
 
-	if ($seite =~ m/<h1>(.+?)<\/h1>/) {
+	if ($seite =~ m/<h1>(.+?)<\/h1>/o) {
 		$titel = $1;
-			if ($titel =~ m/<span>(.+?)<\/span>/) {
+			if ($titel =~ m/<span>(.+?)<\/span>/o) {
 				$info = $1;
-				$info =~ s/ : $//;
-				$titel =~ s/<span>.+?<\/span>//;
+				$info =~ s/ : $//o;
+				$titel =~ s/<span>.+?<\/span>//o;
 			}
 	}
 	
-	if ($seite =~ m/<div class="chapeau">(.+?)<\/div>/) {
+	if ($seite =~ m/<div class="chapeau">(.+?)<\/div>/o) {
 		$excerpt = $1;
 	}
 
-	if ($seite =~ m/<div class="date">(.+?)<\/div>/) {
+	if ($seite =~ m/<div class="date">(.+?)<\/div>/o) {
 		$date = $1;
-		$date =~ m/([0-9]{2}\/[0-9]{2}\/[0-9]{4})/;
+		$date =~ m/([0-9]{2}\/[0-9]{2}\/[0-9]{4})/o;
 		$date = $1;
 	}
 
-	if ($seite =~ m/<div class="caption">(.+?)<\/div>/s) {
+	if ($seite =~ m/<div class="caption">(.+?)<\/div>/os) {
 		$photo = $1;
-		$photo =~ s/<.+?>//g;
-		$photo =~ s/\n//g;
+		$photo =~ s/<.+?>//og;
+		$photo =~ s/\n//og;
 		trim ($photo);
 	}
 }
@@ -267,23 +267,20 @@ push (@text, "url: $url\n");
 @temp = split ("<div class=\"col-460\">", $seite);
 $seite = $temp[1];
 
-$seite =~ s/<script type="text\/javascript">.+?<\/script>//gs;
-$seite =~ s/<p>/\n/g;
-$seite =~ s/<br>/\n/g;
-$seite =~ s/<\/div>/\n/g;
-$seite =~ s/<(?:[^>'"]*|(['"]).*?\1)*>//gs;
-$seite =~ s/Tweet//;
-$seite =~ s/Twitter//;
-$seite =~ s/sas_fo.+$//g;
-$seite =~ s/SmartAd.+$//g;
-$seite =~ s/&quot/\"/g;
-$seite =~ s/&nbsp;/ /g;
+$seite =~ s/<script type="text\/javascript">.+?<\/script>//ogs;
+$seite =~ s/<p>|<br>|<\/div>/\n/og;
+$seite =~ s/<(?:[^>'"]*|(['"]).*?\1)*>//ogs;
+$seite =~ s/Tweet|Twitter//o;
+$seite =~ s/sas_fo.+$//og;
+$seite =~ s/SmartAd.+$//og;
+$seite =~ s/&quot/\"/og;
+$seite =~ s/&nbsp;/ /og;
 
-$seite =~ s/^\s+//g;
-$seite =~ s/\s+/ /g;
-$seite =~ s/\n+/\n/g;
+$seite =~ s/^\s+//og;
+$seite =~ s/\s+/ /og;
+$seite =~ s/\n+/\n/og;
 
-$seite =~ s/Envoyer à un ami//g;
+$seite =~ s/Envoyer à un ami//og;
 
 push (@text, $seite);
 
@@ -291,21 +288,21 @@ push (@text, $seite);
 if (length ($seite) > 10) {
 	foreach $n (@text) {
 		# Due to an irregular HTML encoding...
-		$_ =~ s/&nbsp;/ /g;
-		$_ =~ s/&mdash;/-/g;
-		$_ =~ s/&eacute;/é/g;
-		$_ =~ s/&egrave;/è/g;
-		$_ =~ s/&agrave;/à/g;
-		$_ =~ s/&euro;/€/g;
-		$_ =~ s/<(?:[^>'"]*|(['"]).*?\1)*>//g;
-		$_ =~ s/&rsquo;/&apos;/g;
-		$_ =~ s/&deg;/°/g;
-		$_ =~ s/&copy;/©/g;
+		$_ =~ s/&nbsp;/ /og;
+		$_ =~ s/&mdash;/-/og;
+		$_ =~ s/&eacute;/é/og;
+		$_ =~ s/&egrave;/è/og;
+		$_ =~ s/&agrave;/à/og;
+		$_ =~ s/&euro;/€/og;
+		$_ =~ s/<(?:[^>'"]*|(['"]).*?\1)*>//og;
+		$_ =~ s/&rsquo;/&apos;/og;
+		$_ =~ s/&deg;/°/og;
+		$_ =~ s/&copy;/©/og;
 		print OUTPUT "$n\n";
 	}
 	print OUTPUT "-----\n";
 }
-
+} # end of the no warnings 'uninitialized' pragma
 
 if ( (scalar @liste == 0) && (@buffer) ) {
 	@buffer = uniq @buffer;
@@ -331,6 +328,7 @@ close (OUTPUT);
 close (DONE);
 
 $done_crc = '>EQUIPE_list_done_crc';
+sort (@done_crc);
 open (DONE_CRC, $done_crc);
 foreach $n (@done_crc) {
 print DONE_CRC "$n\n";
