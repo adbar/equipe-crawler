@@ -23,8 +23,9 @@ use warnings;
 use utf8;
 use Encode;
 use LWP::Simple;
-use Digest::CRC qw(crc32); #alternative : use String::CRC32;
+# The modules below probably need to be installed, e.g. using the CPAN console or directly with the Debian/Ubuntu packages libtext-trim-perl and libstring-crc32-perl
 use Text::Trim;
+use String::CRC32;
 
 
 #Init
