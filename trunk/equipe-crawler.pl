@@ -272,9 +272,11 @@ push (@text, "url: $url\n");
 $seite = $temp[1];
 
 $seite =~ s/<script type="text\/javascript">.+?<\/script>//ogs;
-$seite =~ s/<p>|<br>|<\/div>/\n/og;
+$seite =~ s/<p>/\n/og;
+$seite =~ s/<br>/\n/og;
+$seite =~ s/<\/div>/\n/og;
 $seite =~ s/<(?:[^>'"]*|(['"]).*?\1)*>//ogs;
-$seite =~ s/Tweet|Twitter//o;
+$seite =~ s/Tweet|Twitter//og;
 $seite =~ s/sas_fo.+$//og;
 $seite =~ s/SmartAd.+$//og;
 $seite =~ s/&quot/\"/og;
