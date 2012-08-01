@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 
-###			EQUIPE-CRAWLER v1.0			###
+###			EQUIPE-CRAWLER v1.1			###
 ###		http://code.google.com/p/equipe-crawler/ 	###
 
 ###	This script is brought to you by Adrien Barbaresi.
@@ -173,9 +173,11 @@ if (scalar @buffer >= 1000) {
 @liste = grep { ! $seen{ $_ }++ } @liste; # remove duplicates (fast)
 
 
+unless ($url eq $recup) { # do not process the index page
 # Extraction of metadata
 # All this part is based on regular expressions, which is not recommended when crawling in the wild.
-{ no warnings 'uninitialized';
+
+{ no warnings 'uninitialized'; # do not display any warning of the selection is empty
 
 # Old design of the HTML code
 if ($seite =~ m/<div id="corps">/o) {
@@ -309,6 +311,7 @@ if (length ($seite) > 10) {
 	print OUTPUT "-----\n";
 }
 } # end of the no warnings 'uninitialized' pragma
+} # end of 'do not process the index page'
 
 if ( (scalar @liste == 0) && (@buffer) ) {
 	%seen = ();
