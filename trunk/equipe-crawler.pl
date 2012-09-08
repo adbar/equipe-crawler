@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 
 
-###			EQUIPE-CRAWLER v1.1			###
+###			EQUIPE-CRAWLER v1.2			###
 ###		http://code.google.com/p/equipe-crawler/ 	###
 
 ###	This script is brought to you by Adrien Barbaresi.
@@ -20,12 +20,19 @@
 use strict;
 use warnings;
 #use locale;
+use LWP::UserAgent;
+use base 'HTTP::Message';
+require Compress::Zlib;
 use utf8;
+use open ':encoding(utf8)';
 use Encode;
 use LWP::Simple;
 # The modules below probably need to be installed, e.g. using the CPAN console or directly with the Debian/Ubuntu packages libtext-trim-perl and libstring-crc32-perl
 use Text::Trim;
 use String::CRC32;
+
+
+### TO DO : arguments, subs
 
 
 #Init
@@ -34,117 +41,128 @@ my $recup = "http://www.lequipe.fr/";
 # Change number of pages crawled at a time here
 my $number = 1000;
 
-my $runs = 1;
-my ($url, $urlcorr, $block, $seite, $n, @text, $titel, $excerpt, $info, $autor, $datum, @reihe, $link, @links, @temp, @done, $line, %seen);
-my (@buffer, $q);
-my ($crc, @done_crc, $links_crc);
+# configuring the LWP agent
+my ($request, $result);
+my $ua = LWP::UserAgent->new;
+my $can_accept = HTTP::Message::decodable;
+$ua->agent("Equipe-Crawler/1.2");
+$ua->timeout(10);
 
-my $output = ">>EQUIPE_flatfile";
-open (OUTPUT, $output) or die;
-my $record = '>>EQUIPE_log';
-open (TRACE, $record) or die;
-my $done = '>>EQUIPE_list_done';
-open (DONE, $done);
+my $runs = 1;
+my ($url, $urlcorr, $seite, $n, @links, @temp, %seen, @buffer, $q, $crc);
+
 
 ##Loading...
-print "Initialisation...\n";
+print "Initialization...\n";
 
-my $done_crc = 'EQUIPE_list_done_crc';
+my $done_crc_file = 'EQUIPE_list_done_crc';
 my %done_crc;
-if (-e $done_crc) {
-open (DONE_CRC, $done_crc) or die;
-$line = 0;
-	while (<DONE_CRC>) {
-	chomp;
-	$done_crc{$_}++;
-	$done_crc[$line] = $_;
-	$line++;
+if (-e $done_crc_file) {
+	open (my $done_crc_read, '<', $done_crc_file) or die "Cannot open list-done-crc file: $!\n";
+	while (<$done_crc_read>) {
+		chomp;
+		$done_crc{$_}++;
 	}
-close (DONE_CRC) or die;
+	close ($done_crc_read) or die;
 }
 
-my $links = 'EQUIPE_list_todo';
+my $links_file = 'EQUIPE_list_todo';
 my @liste;
-if (-e $links) {
-open (LINKS, $links) or die;
-my $i = 0;
-	while (<LINKS>) {
-	chomp;
-	$crc = crc32($_);
-	unless (exists $done_crc{$crc}) {
-	push (@liste, $_);
+if (-e $links_file) {
+	open (my $links, '<', $links_file) or die "Cannot open list-todo file: $!\n";
+	my $i = 0;
+	while (<$links>) {
+		chomp;
+		$_ =~ s/\/komplettansicht.*$//;
+		$_ =~ s/\/+$//;
+		$crc = crc32($_);
+		unless (exists $done_crc{$crc}) {
+			push (@liste, $_);
+		}
 	}
-	}
-%seen = ();
-@liste = grep { ! $seen{ $_ }++ } @liste; # remove duplicates (fast)
-close (LINKS) or die;
+	%seen = ();
+	@liste = grep { ! $seen{ $_ }++ } @liste; # remove duplicates (fast)
+	close ($links) or die;
 }
 
+open (my $output, '>>', 'EQUIPE_flatfile') or die "Cannot open output file: $!\n";
+open (my $log, '>>', 'EQUIPE_log') or die "Cannot open log file: $!\n";
+open (my $done, '>>', 'EQUIPE_list_done') or die "Cannot open list-done file: $!\n";
 
 # Begin of the main loop
 
 print "run -- list -- buffer\n";
 while ($runs <= $number) {
 
-if (@liste) {
-$url = splice (@liste, 0, 1);
-}
-else {
-$url = $recup;
-}
+  if (@liste) {
+  	$url = splice (@liste, 0, 1);
+  }
+  else {
+	$url = $recup;
+  }
 
-push (@done_crc, crc32($url));
-$done_crc{crc32($url)}++;
-print DONE $url, "\n";
+  $done_crc{crc32($url)}++;
+  print $done $url, "\n";
 
-# Change output frequency here :
-if ($runs%10 == 0) {
-print $runs, "\t"; print scalar (@liste), "\t"; print scalar (@buffer), "\n";
-}
+  # Change output frequency here :
+  if ($runs%10 == 0) {
+	print $runs, "\t"; print scalar (@liste), "\t"; print scalar (@buffer), "\n";
+  }
 
-print TRACE "$runs\t"; print TRACE scalar (@liste), "\n";
-print TRACE "$url\n";
+  print $log "$runs\t"; print $log scalar (@liste), "\n";
+  print $log "$url\n";
 
-my (@text, $titel, $excerpt, $info, $photo, $date);
+  my ($req, @text, $titel, $excerpt, $info, $photo, $date);
 
-#Fetch the page
-if ($url !~ m/^http:\/\/www\.lequipe\.fr/o) {
+  # Fetch the page
+  if ($url !~ m/^http:\/\/www\.lequipe\.fr/o) {
 	$urlcorr = "http://www.lequipe.fr/" . $url;
-	$seite = get $urlcorr;
-}
-else {
-	$seite = get $url;
-}
-# re-encoding seems to be necessary
-$seite = encode("iso-8859-1", $seite);
+	$req = HTTP::Request->new(GET => $urlcorr);
+  }
+  else {
+	$req = HTTP::Request->new(GET => $url)
+  }
+  $req->header(
+	'Accept' => 'text/html',
+	'Accept-Encoding' => $can_accept,
+  );
+  $result = $ua->request($request);
+  if ($result->is_success) {
+	$seite = $result->decoded_content; #(charset => 'none')
+  }
+  else {
+	next;
+  }
+
+  # re-encoding seems to be necessary
+  $seite = encode("iso-8859-1", $seite);
 
 
-# Links
-@links = ();
-@temp = split ("<a", $seite);
-foreach $n (@temp) {
+  # Links
+  @links = ();
+  @temp = split ("<a", $seite);
+  foreach $n (@temp) {
+  	#if ( ($n =~ m/\/Actualites/) || ($n =~ m/\/breves20/) ) {
+  	if ($n =~ m/\/Actualites/o) {
+		next if ($n =~ m/redir\.php/o);
+		$n =~ m/href="(.+?)"/o;
+		$n = $1;
+		$n =~ s/^http:\/\/log.+?xiti.com\/go.click?.+?&url=//o;
+		$n =~ s/^http:\/\/www\.lequipe\.fr\///o;
+		$n =~ s/^\///o;
+		push (@links, $n);
+ 	 }
+  }
 
-#if ( ($n =~ m/\/Actualites/) || ($n =~ m/\/breves20/) ) {
-if ($n =~ m/\/Actualites/o) {
-	next if ($n =~ m/redir\.php/o);
-	$n =~ m/href="(.+?)"/o;
-	$n = $1;
-	$n =~ s/^http:\/\/log.+?xiti.com\/go.click?.+?&url=//o;
-	$n =~ s/^http:\/\/www\.lequipe\.fr\///o;
-	$n =~ s/^\///o;
-	push (@links, $n);
-}
-}
+  %seen = ();
+  @links = grep { ! $seen{ $_ }++ } @links; # remove duplicates (fast)
 
-%seen = ();
-@links = grep { ! $seen{ $_ }++ } @links; # remove duplicates (fast)
-
-# Storing and buffering links
-# The use of a buffer saves memory and processing time (especially by frequently occurring links)
-$q=0;
-foreach $n (@links) {
+  # Storing and buffering links
+  # The use of a buffer saves memory and processing time (especially by frequently occurring links)
+  $q=0;
+  foreach $n (@links) {
 	if ($q >= 5) {
-	push (@buffer, $n);
+		push (@buffer, $n);
 	}
 	else {
 		$crc = crc32($n);
@@ -153,11 +171,11 @@ foreach $n (@links) {
 		}
 	}
 	$q++;
-}
+  }
 
 
-# Buffer control
-if (scalar @buffer >= 1000) {
+  # Buffer control
+  if (scalar @buffer >= 1000) {
 	%seen = ();
 	@buffer = grep { ! $seen{ $_ }++ } @buffer; # remove duplicates (fast)
 	foreach $n (@buffer) {
@@ -167,153 +185,177 @@ if (scalar @buffer >= 1000) {
 		}
 	}
 	@buffer = ();
-}
+  }
 
-%seen = ();
-@liste = grep { ! $seen{ $_ }++ } @liste; # remove duplicates (fast)
+  %seen = ();
+  @liste = grep { ! $seen{ $_ }++ } @liste; # remove duplicates (fast)
 
 
-unless ($url eq $recup) { # do not process the index page
-# Extraction of metadata
-# All this part is based on regular expressions, which is not recommended when crawling in the wild.
+  unless ($url eq $recup) { # do not process the index page
+  # Extraction of metadata
+  # All this part is based on regular expressions, which is not recommended when crawling in the wild.
 
-{ no warnings 'uninitialized'; # do not display any warning of the selection is empty
+  { no warnings 'uninitialized'; # do not display any warning of the selection is empty
 
-# Old design of the HTML code
-if ($seite =~ m/<div id="corps">/o) {
+	# Old design of the HTML code
+	if ($seite =~ m/<div id="corps">/o) {
 
-	@temp = split ("<div id=\"corps\">", $seite);
-	$seite = $temp[1];
-	@temp = split ("<div id=\"bloc_bas_breve\">", $seite);
-	$seite = $temp[0];
+		@temp = split ("<div id=\"corps\">", $seite);
+		$seite = $temp[1];
+		@temp = split ("<div id=\"bloc_bas_breve\">", $seite);
+		$seite = $temp[0];
 
-	$seite =~ m/(<h2>)(.+?)(<\/h2>)/o;
-	$info = $2;
+		$seite =~ m/(<h2>)(.+?)(<\/h2>)/o;
+		$info = $2;
 	
-	$seite =~ m/(<h1>)(.+?)(<\/h1>)/o;
-	$titel = $2;
+		$seite =~ m/(<h1>)(.+?)(<\/h1>)/o;
+		$titel = $2;
 
-	if ($seite =~ m/<strong>/o) {
-		$seite =~ m/(<strong>)(.+?)(<\/strong>)/o;
-		$excerpt = $2;
-		$seite =~ s/<strong>.+?<\/strong>//o;
+		if ($seite =~ m/<strong>/o) {
+			$seite =~ m/(<strong>)(.+?)(<\/strong>)/o;
+			$excerpt = $2;
+			$seite =~ s/<strong>.+?<\/strong>//o;
+		}
+
+		if ($seite =~ m/<strong>/o) {
+			$seite =~ m/(<div class="leg">?)(.+?)(<\/div>)/o;
+			$photo = $2;
+			$seite =~ s/<div class="leg">.+?<\/div>//o;
+		}
+
+		$seite =~ s/<h2>.+?<\/h2>//og;
+		$seite =~ s/<h1>.+?<\/h1>//og;
+
+		# Possible improvement : author detection
+		#<div id="auteur">
+        	#<span>Le 04/07/2010 à 14:58</span>
+        	#</div>
 	}
 
-	if ($seite =~ m/<strong>/o) {
-	$seite =~ m/(<div class="leg">?)(.+?)(<\/div>)/o;
-	$photo = $2;
-	$seite =~ s/<div class="leg">.+?<\/div>//o;
-	}
+	# New design of the HTML code
+	else {
+		@temp = split ("<div id=\"container\">", $seite);
+		$seite = $temp[1];
+		@temp = split ("<div id=\"bloc_bas_breve\">", $seite);
+		$seite = $temp[0];
 
-	$seite =~ s/<h2>.+?<\/h2>//og;
-	$seite =~ s/<h1>.+?<\/h1>//og;
-
-	# Possible improvement : author detection
-	#<div id="auteur">
-        #        <span>Le 04/07/2010 à 14:58</span>
-        #</div>
-}
-
-# New design of the HTML code
-else {
-	@temp = split ("<div id=\"container\">", $seite);
-	$seite = $temp[1];
-	@temp = split ("<div id=\"bloc_bas_breve\">", $seite);
-	$seite = $temp[0];
-
-	if ($seite =~ m/<h1>(.+?)<\/h1>/o) {
-		$titel = $1;
+		if ($seite =~ m/<h1>(.+?)<\/h1>/o) {
+			$titel = $1;
 			if ($titel =~ m/<span>(.+?)<\/span>/o) {
 				$info = $1;
 				$info =~ s/ : $//o;
 				$titel =~ s/<span>.+?<\/span>//o;
 			}
-	}
+		}
 	
-	if ($seite =~ m/<div class="chapeau">(.+?)<\/div>/o) {
-		$excerpt = $1;
+		if ($seite =~ m/<div class="chapeau">(.+?)<\/div>/o) {
+			$excerpt = $1;
+		}
+
+		if ($seite =~ m/<div class="date">(.+?)<\/div>/o) {
+			$date = $1;
+			$date =~ m/([0-9]{2}\/[0-9]{2}\/[0-9]{4})/o;
+			$date = $1;
+		}
+
+		if ($seite =~ m/<div class="caption">(.+?)<\/div>/os) {
+			$photo = $1;
+			$photo =~ s/<.+?>//og;
+			$photo =~ s/\n//og;
+			trim ($photo);
+		}
 	}
 
-	if ($seite =~ m/<div class="date">(.+?)<\/div>/o) {
-		$date = $1;
-		$date =~ m/([0-9]{2}\/[0-9]{2}\/[0-9]{4})/o;
-		$date = $1;
+	if ($info) {
+		$info = "Info: " . $info;
 	}
-
-	if ($seite =~ m/<div class="caption">(.+?)<\/div>/os) {
-		$photo = $1;
-		$photo =~ s/<.+?>//og;
-		$photo =~ s/\n//og;
-		trim ($photo);
+	else {
+		$info = "Info: ";
 	}
-}
+	push (@text, $info);
 
-if ($info) {$info = "Info: " . $info;}
-else {$info = "Info: ";}
-push (@text, $info);
-if ($date) {$date = "Date: " . $date;}
-else {$date = "Date: ";}
-push (@text, $date);
-if ($titel) {$titel = "Titre: " . $titel;}
-else {$titel = "Titre: ";}
-push (@text, $titel);
-if ($excerpt) {$excerpt = "En-tete: " . $excerpt;}
-else {$excerpt = "En-tete: ";}
-push (@text, $excerpt);
-if ($photo) {$photo = "Photo: " . $photo;}
-else {$photo = "Photo: ";}
-push (@text, $photo);
-
-push (@text, "url: $url\n");
-
-
-# Extraction of the text itself
-# Using regular expressions, there might be a more efficient way to do this.
-
-@temp = split ("<div class=\"col-460\">", $seite);
-$seite = $temp[1];
-
-$seite =~ s/<script type="text\/javascript">.+?<\/script>//ogs;
-$seite =~ s/<p>/\n/og;
-$seite =~ s/<br>/\n/og;
-$seite =~ s/<\/div>/\n/og;
-$seite =~ s/<(?:[^>'"]*|(['"]).*?\1)*>//ogs;
-$seite =~ s/Tweet|Twitter//og;
-$seite =~ s/sas_fo.+$//og;
-$seite =~ s/SmartAd.+$//og;
-$seite =~ s/&quot/\"/og;
-$seite =~ s/&nbsp;/ /og;
-
-$seite =~ s/^\s+//og;
-$seite =~ s/\s+/ /og;
-$seite =~ s/\n+/\n/og;
-
-$seite =~ s/Envoyer à un ami//og;
-
-push (@text, $seite);
-
-# Does not print out an empty text
-if (length ($seite) > 10) {
-	foreach $n (@text) {
-		# Due to an irregular HTML encoding...
-		$_ =~ s/&nbsp;/ /og;
-		$_ =~ s/&mdash;/-/og;
-		$_ =~ s/&eacute;/é/og;
-		$_ =~ s/&egrave;/è/og;
-		$_ =~ s/&agrave;/à/og;
-		$_ =~ s/&euro;/€/og;
-		$_ =~ s/<(?:[^>'"]*|(['"]).*?\1)*>//og;
-		$_ =~ s/&rsquo;/&apos;/og;
-		$_ =~ s/&deg;/°/og;
-		$_ =~ s/&copy;/©/og;
-		print OUTPUT "$n\n";
+	if ($date) {
+		$date = "Date: " . $date;
 	}
-	print OUTPUT "-----\n";
-}
-} # end of the no warnings 'uninitialized' pragma
-} # end of 'do not process the index page'
+	else {
+		$date = "Date: ";
+	}
+	push (@text, $date);
+	
+	if ($titel) {
+		$titel = "Titre: " . $titel;
+	}
+	else {
+		$titel = "Titre: ";
+	}
+	push (@text, $titel);
 
-if ( (scalar @liste == 0) && (@buffer) ) {
+	if ($excerpt) {
+		$excerpt = "En-tete: " . $excerpt;
+	}
+	else {
+		$excerpt = "En-tete: ";
+	}
+	push (@text, $excerpt);
+
+	if ($photo) {
+		$photo = "Photo: " . $photo;
+	}
+	else {
+		$photo = "Photo: ";
+	}
+	push (@text, $photo);
+
+	push (@text, "url: $url\n");
+
+
+	# Extraction of the text itself
+	# Using regular expressions, there might be a more efficient way to do this.
+
+	@temp = split ("<div class=\"col-460\">", $seite);
+	$seite = $temp[1];
+
+	$seite =~ s/<script type="text\/javascript">.+?<\/script>//ogs;
+	$seite =~ s/<p>/\n/og;
+	$seite =~ s/<br>/\n/og;
+	$seite =~ s/<\/div>/\n/og;
+	$seite =~ s/<(?:[^>'"]*|(['"]).*?\1)*>//ogs;
+	$seite =~ s/Tweet|Twitter//og;
+	$seite =~ s/sas_fo.+$//og;
+	$seite =~ s/SmartAd.+$//og;
+	$seite =~ s/&quot/\"/og;
+	$seite =~ s/&nbsp;/ /og;
+
+	$seite =~ s/^\s+//og;
+	$seite =~ s/\s+/ /og;
+	$seite =~ s/\n+/\n/og;
+
+	$seite =~ s/Envoyer à un ami//og;
+
+	push (@text, $seite);
+
+	# Does not print out an empty text
+	if (length ($seite) > 10) {
+		foreach $n (@text) {
+			# Due to an irregular HTML encoding...
+			$_ =~ s/&nbsp;/ /og;
+			$_ =~ s/&mdash;/-/og;
+			$_ =~ s/&eacute;/é/og;
+			$_ =~ s/&egrave;/è/og;
+			$_ =~ s/&agrave;/à/og;
+			$_ =~ s/&euro;/€/og;
+			$_ =~ s/<(?:[^>'"]*|(['"]).*?\1)*>//og;
+			$_ =~ s/&rsquo;/&apos;/og;
+			$_ =~ s/&deg;/°/og;
+			$_ =~ s/&copy;/©/og;
+			print $output "$n\n";
+		}
+	print $output "-----\n";
+	}
+  } # end of the no warnings 'uninitialized' pragma
+  } # end of 'do not process the index page'
+
+  if ( (scalar @liste == 0) && (@buffer) ) {
 	%seen = ();
 	@buffer = grep { ! $seen{ $_ }++ } @buffer; # remove duplicates (fast)
 	foreach $n (@buffer) {
@@ -325,39 +367,32 @@ if ( (scalar @liste == 0) && (@buffer) ) {
 	@buffer = ();
 	%seen = ();
 	@liste = grep { ! $seen{ $_ }++ } @liste; # remove duplicates (fast)
-}
+  }
 
-if ( (scalar (@liste) == 0) && (scalar (@buffer) == 0) ) {
-last;
-}
+  if ( (scalar (@liste) == 0) && (scalar (@buffer) == 0) ) {
+  last;
+  }
 
-$runs++;
+  $runs++;
 }
 
 # End of processing, saving lists 
-close (OUTPUT);
-close (DONE);
+close ($output);
+close ($done);
 
-$done_crc = '>EQUIPE_list_done_crc';
-sort (@done_crc);
-open (DONE_CRC, $done_crc);
-foreach $n (@done_crc) {
-print DONE_CRC "$n\n";
-}
-close (DONE_CRC);
+open (my $done_crc_write, '>', $done_crc_file) or die "Cannot open list-done-crc file (no write access ?) : $!\n";
+print $done_crc_write join("\n", keys %done_crc);
+close ($done_crc_write);
 
-$links = '>EQUIPE_list_todo';
-open (LINKS, $links) or die;
+open (my $todo_write, '>', $links_file) or die "Cannot open list-todo file (no write access ?) : $!\n";
 if (@buffer) {
 	push (@liste, @buffer);
 	print "Buffer stored\n";
 }
 %seen = ();
 @liste = grep { ! $seen{ $_ }++ } @liste; # remove duplicates (fast)
-foreach $n (@liste) {
-print LINKS "$n\n";
-}
-close (LINKS);
+print $todo_write join("\n", @liste);
+close ($todo_write);
 
-print TRACE "***************\n";
-close (TRACE);
+print $log "***************\n";
+close ($log);
